@@ -1,4 +1,4 @@
-package mailer
+package revel_mailer
 
 import (
   "github.com/robfig/revel"
