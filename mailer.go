@@ -31,26 +31,42 @@ func (m *Mailer) Send(mail_args map[string]interface{}) error {
   names := strings.Split(runtime.FuncForPC(pc).Name(), ".")
   m.template =  names[len(names)-2] + "/" + names[len(names)-1]
 
-  host := revel.Config.StringDefault("mail.host", "")
-  full_url := fmt.Sprintf("%s:%d", host, revel.Config.IntDefault("mail.port", 25))
-  c, err := smtp.Dial(full_url)
+  host, host_ok := revel.Config.String("mail.host")
+  if !host_ok {
+    revel.ERROR.Println("mail host not set")
+  }
+  port, port_ok := revel.Config.Int("mail.port")
+  if !port_ok {
+    revel.ERROR.Println("mail port not set")
+  }
+
+  c, err := smtp.Dial(fmt.Sprintf("%s:%d", host, port))
   if err != nil {
     return err
   }
+
   if ok, _ := c.Extension("STARTTLS"); ok {
     if err = c.StartTLS(nil); err != nil {
       return err
     }
   }
-  if err = c.Auth(smtp.PlainAuth(
-      revel.Config.StringDefault("mail.from", ""),
-      revel.Config.StringDefault("mail.username", ""),
-      getPassword(),
-      host,
-    )); err != nil {
+
+  from, from_ok := revel.Config.String("mail.from") 
+  if !from_ok {
+    revel.ERROR.Println("mail.from not set")
+  }
+
+
+  username, username_ok := revel.Config.String("mail.username") 
+  if !username_ok {
+    revel.ERROR.Println("mail.username not set")
+  }
+
+  if err = c.Auth(smtp.PlainAuth(from, username, getPassword(), host)); err != nil {
        return err
   }
-  if err = c.Mail(revel.Config.StringDefault("mail.username", "")); err != nil {
+
+  if err = c.Mail(username); err != nil {
     return err
   }
 
@@ -162,6 +178,9 @@ func getPassword() string {
       password = revel.Config.StringDefault("mail.password", "")
   }else{
     password = string(password_byte)
+  }
+  if password == "" {
+    revel.ERROR.Println("mail password not set")
   }
   return password
 }
