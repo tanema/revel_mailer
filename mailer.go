@@ -6,7 +6,6 @@ import (
   "bytes"
   "io/ioutil"
   "io"
-  "os"
   "mime/multipart"
   "fmt"
   "path"
@@ -171,8 +170,12 @@ func (m *Mailer) renderTemplate(mime string) string {
 
 func getPassword() string {
   password := ""
-  wd, _ := os.Getwd()
-  email_pwd_path := path.Clean(path.Join(wd, "./email.pwd"))
+  email_pwd_path := path.Clean(path.Join(revel.BasePath, "email.pwd"))
+
+  if revel.RunMode == "dev" {
+    revel.INFO.Println(email_pwd_path)
+  }
+
   password_byte, err := ioutil.ReadFile(email_pwd_path)
   if err != nil {
       password = revel.Config.StringDefault("mail.password", "")
