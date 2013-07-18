@@ -24,6 +24,7 @@ type Mailer struct {
   renderargs map[string]interface{}
   host, from, username string
   port int
+  tls bool
 }
 
 type H map[string]interface{}
@@ -38,11 +39,11 @@ func (m *Mailer) do_config(){
   if !ok {
     revel.ERROR.Println("mail port not set")
   }
-  m.from, ok := revel.Config.String("mail.from") 
+  m.from, ok = revel.Config.String("mail.from") 
   if !ok {
     revel.ERROR.Println("mail.from not set")
   }
-  m.username, ok := revel.Config.String("mail.username") 
+  m.username, ok = revel.Config.String("mail.username") 
   if !ok {
     revel.ERROR.Println("mail.username not set")
   }
@@ -95,7 +96,7 @@ func (m *Mailer) Send(mail_args map[string]interface{}) error {
     return err
   }
 
-  if err = c.Mail(username); err != nil {
+  if err = c.Mail(m.username); err != nil {
     return err
   }
 
