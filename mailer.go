@@ -12,6 +12,8 @@ import (
   "runtime"
   "reflect"
   "strings"
+  "net"
+  "crypto/tls"
 )
 
 const CRLF = "\r\n"
@@ -20,26 +22,65 @@ type Mailer struct {
   to, cc, bcc []string
   template string
   renderargs map[string]interface{}
+  host, from, username string
+  port int
 }
 
 type H map[string]interface{}
+
+func (m *Mailer) do_config(){
+  ok := true
+  m.host, ok = revel.Config.String("mail.host")
+  if !ok {
+    revel.ERROR.Println("mail host not set")
+  }
+  m.port, ok = revel.Config.Int("mail.port")
+  if !ok {
+    revel.ERROR.Println("mail port not set")
+  }
+  m.from, ok := revel.Config.String("mail.from") 
+  if !ok {
+    revel.ERROR.Println("mail.from not set")
+  }
+  m.username, ok := revel.Config.String("mail.username") 
+  if !ok {
+    revel.ERROR.Println("mail.username not set")
+  }
+  m.tls = revel.Config.BoolDefault("mail.tls", false) 
+}
+
+func (m *Mailer) getClient() (*smtp.Client, error) {
+  var c *smtp.Client
+  if m.tls == true {
+    conn, err := tls.Dial("tcp", fmt.Sprintf("%s:%d", m.host, m.port), nil)
+    if err != nil {
+      return nil, err
+    }
+    c, err = smtp.NewClient(conn, m.host)
+    if err != nil {
+      return nil, err
+    }
+  } else {
+    conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", m.host, m.port))
+    if err != nil {
+      return nil, err
+    }
+    c, err = smtp.NewClient(conn, m.host)
+    if err != nil {
+      return nil, err
+    }
+  }
+  return c, nil
+}
 
 func (m *Mailer) Send(mail_args map[string]interface{}) error {
   m.renderargs = mail_args
   pc, _, _, _ := runtime.Caller(1)
   names := strings.Split(runtime.FuncForPC(pc).Name(), ".")
   m.template =  names[len(names)-2] + "/" + names[len(names)-1]
+  m.do_config()
 
-  host, host_ok := revel.Config.String("mail.host")
-  if !host_ok {
-    revel.ERROR.Println("mail host not set")
-  }
-  port, port_ok := revel.Config.Int("mail.port")
-  if !port_ok {
-    revel.ERROR.Println("mail port not set")
-  }
-
-  c, err := smtp.Dial(fmt.Sprintf("%s:%d", host, port))
+  c, err := m.getClient()
   if err != nil {
     return err
   }
@@ -50,19 +91,8 @@ func (m *Mailer) Send(mail_args map[string]interface{}) error {
     }
   }
 
-  from, from_ok := revel.Config.String("mail.from") 
-  if !from_ok {
-    revel.ERROR.Println("mail.from not set")
-  }
-
-
-  username, username_ok := revel.Config.String("mail.username") 
-  if !username_ok {
-    revel.ERROR.Println("mail.username not set")
-  }
-
-  if err = c.Auth(smtp.PlainAuth(from, username, getPassword(), host)); err != nil {
-       return err
+  if err = c.Auth(smtp.PlainAuth(m.from, m.username, getPassword(), m.host)); err != nil {
+    return err
   }
 
   if err = c.Mail(username); err != nil {
