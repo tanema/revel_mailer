@@ -22,7 +22,7 @@ type Mailer struct {
   to, cc, bcc []string
   template string
   renderargs map[string]interface{}
-  host, from, username string
+  domain, address, from, username string
   port int
 }
 
@@ -30,13 +30,17 @@ type H map[string]interface{}
 
 func (m *Mailer) do_config(){
   ok := true
-  m.host, ok = revel.Config.String("mail.host")
+  m.address, ok = revel.Config.String("mail.address")
   if !ok {
-    revel.ERROR.Println("mail host not set")
+    revel.ERROR.Println("mail address not set")
   }
   m.port, ok = revel.Config.Int("mail.port")
   if !ok {
     revel.ERROR.Println("mail port not set")
+  }
+  m.domain, ok = revel.Config.String("mail.domain")
+  if !ok {
+    revel.ERROR.Println("mail domain not set")
   }
   m.from, ok := revel.Config.String("mail.from") 
   if !ok {
@@ -52,20 +56,20 @@ func (m *Mailer) do_config(){
 func (m *Mailer) getClient() (*smtp.Client, error) {
   var c *smtp.Client
   if m.tls == true {
-    conn, err := tls.Dial("tcp", fmt.Sprintf("%s:%d", m.host, m.port), nil)
+    conn, err := tls.Dial("tcp", fmt.Sprintf("%s:%d", m.address, m.port), nil)
     if err != nil {
       return nil, err
     }
-    c, err = smtp.NewClient(conn, m.host)
+    c, err = smtp.NewClient(conn, m.domain)
     if err != nil {
       return nil, err
     }
   } else {
-    conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", m.host, m.port))
+    conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", m.address, m.port))
     if err != nil {
       return nil, err
     }
-    c, err = smtp.NewClient(conn, m.host)
+    c, err = smtp.NewClient(conn, m.domain)
     if err != nil {
       return nil, err
     }
@@ -91,7 +95,7 @@ func (m *Mailer) Send(mail_args map[string]interface{}) error {
     }
   }
 
-  if err = c.Auth(smtp.PlainAuth(m.from, m.username, getPassword(), m.host)); err != nil {
+  if err = c.Auth(smtp.PlainAuth(m.from, m.username, getPassword(), m.address)); err != nil {
     return err
   }
 
