@@ -22,7 +22,7 @@ type Mailer struct {
   to, cc, bcc []string
   template string
   renderargs map[string]interface{}
-  domain, address, from, username string
+  address, from, username string
   port int
   tls bool
 }
@@ -38,10 +38,6 @@ func (m *Mailer) do_config(){
   m.port, ok = revel.Config.Int("mail.port")
   if !ok {
     revel.ERROR.Println("mail port not set")
-  }
-  m.domain, ok = revel.Config.String("mail.domain")
-  if !ok {
-    revel.ERROR.Println("mail domain not set")
   }
   m.from, ok = revel.Config.String("mail.from") 
   if !ok {
@@ -61,7 +57,7 @@ func (m *Mailer) getClient() (*smtp.Client, error) {
     if err != nil {
       return nil, err
     }
-    c, err = smtp.NewClient(conn, m.domain)
+    c, err = smtp.NewClient(conn, m.address)
     if err != nil {
       return nil, err
     }
@@ -70,7 +66,7 @@ func (m *Mailer) getClient() (*smtp.Client, error) {
     if err != nil {
       return nil, err
     }
-    c, err = smtp.NewClient(conn, m.domain)
+    c, err = smtp.NewClient(conn, m.address)
     if err != nil {
       return nil, err
     }
