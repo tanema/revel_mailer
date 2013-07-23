@@ -6,6 +6,7 @@ import (
   "bytes"
   "io/ioutil"
   "io"
+  "os"
   "mime/multipart"
   "fmt"
   "path"
@@ -24,7 +25,7 @@ type Mailer struct {
   renderargs map[string]interface{}
   address, from, username string
   port int
-  tls bool
+  tls, debug, concurrent bool
 }
 
 type H map[string]interface{}
@@ -48,6 +49,8 @@ func (m *Mailer) do_config(){
     revel.ERROR.Println("mail.username not set")
   }
   m.tls = revel.Config.BoolDefault("mail.tls", false) 
+  m.debug = revel.Config.BoolDefault("mail.debug", false) 
+  m.concurrent = revel.Config.BoolDefault("mail.concurrent", true) 
 }
 
 func (m *Mailer) getClient() (*smtp.Client, error) {
@@ -81,6 +84,38 @@ func (m *Mailer) Send(mail_args map[string]interface{}) error {
   m.template =  names[len(names)-2] + "/" + names[len(names)-1]
   m.do_config()
 
+  if mail_args["to"] != nil {
+    m.to = makeSAFI(mail_args["to"])
+  }
+  if mail_args["cc"] != nil {
+    m.cc = makeSAFI(mail_args["cc"])
+  }
+  if mail_args["bcc"] != nil {
+    m.bcc = makeSAFI(mail_args["bcc"])
+  }
+
+  if m.debug {
+    return m.sendDebug()
+  }else{
+    if m.concurrent {
+      go m.send()
+      return nil
+    }else{
+      return m.send()
+    }
+  }
+}
+
+func (m *Mailer) sendDebug() error {
+  mail, err := m.renderMail(nil)
+  if err != nil {
+    return err
+  }
+  fmt.Println(string(mail))
+  return nil
+}
+
+func (m *Mailer) send() error {
   c, err := m.getClient()
   if err != nil {
     return err
@@ -92,22 +127,12 @@ func (m *Mailer) Send(mail_args map[string]interface{}) error {
     }
   }
 
-  if err = c.Auth(smtp.PlainAuth(m.from, m.username, getPassword(), m.address)); err != nil {
+  if err = c.Auth(smtp.PlainAuth(m.from, m.username, m.getPassword(), m.address)); err != nil {
     return err
   }
 
   if err = c.Mail(m.username); err != nil {
     return err
-  }
-
-  if mail_args["to"] != nil {
-    m.to = makeSAFI(mail_args["to"])
-  }
-  if mail_args["cc"] != nil {
-    m.cc = makeSAFI(mail_args["cc"])
-  }
-  if mail_args["bcc"] != nil {
-    m.bcc = makeSAFI(mail_args["bcc"])
   }
 
   if len(m.to) + len(m.cc) + len(m.bcc) == 0 {
@@ -130,10 +155,6 @@ func (m *Mailer) Send(mail_args map[string]interface{}) error {
     return err
   }
 
-  if revel.RunMode == "dev" {
-    fmt.Println(string(mail))
-  }
-
   _, err = w.Write(mail)
   if err != nil {
     return err
@@ -142,20 +163,33 @@ func (m *Mailer) Send(mail_args map[string]interface{}) error {
   if err != nil {
     return err
   }
+
   return c.Quit()
 }
 
 func (m *Mailer) renderMail(w io.WriteCloser) ([]byte, error) {
-  multi := multipart.NewWriter(w)
+  multi := &multipart.Writer{}
+  if w != nil {
+    multi = multipart.NewWriter(w)
+  }else{
+    multi = multipart.NewWriter(bytes.NewBufferString(""))
+  }
 
   body, err := m.renderBody(multi)
   if err != nil {
     return nil, err
   }
 
+  from := ""
+  if m.renderargs["from"] == nil {
+    from = revel.Config.StringDefault("mail.from", revel.Config.StringDefault("mail.username", ""))
+  }else{
+    from = reflect.ValueOf(m.renderargs["from"]).String()
+  }
+
   mail := []string{
     "Subject: " + reflect.ValueOf(m.renderargs["subject"]).String(),
-    "From: " + revel.Config.StringDefault("mail.from", revel.Config.StringDefault("mail.username", "")),
+    "From: " + from,
     "To: " + strings.Join(m.to, ","),
     "Bcc: " + strings.Join(m.bcc, ","),
     "Cc: " + strings.Join(m.cc, ","),
@@ -189,7 +223,7 @@ func (m *Mailer) renderTemplate(mime string) string {
   var body bytes.Buffer
   template, err := revel.MainTemplateLoader.Template(m.template + "." + mime)
   if template == nil || err != nil {
-    if revel.RunMode == "dev" {
+    if m.debug {
       revel.ERROR.Println(err)
     }
     return ""
@@ -199,17 +233,21 @@ func (m *Mailer) renderTemplate(mime string) string {
   return body.String()
 }
 
-func getPassword() string {
+func (m *Mailer) getPassword() string {
   password := ""
   email_pwd_path := path.Clean(path.Join(revel.BasePath, "email.pwd"))
 
-  if revel.RunMode == "dev" {
+  if m.debug {
     revel.INFO.Println(email_pwd_path)
   }
 
   password_byte, err := ioutil.ReadFile(email_pwd_path)
   if err != nil {
-      password = revel.Config.StringDefault("mail.password", "")
+      if os.Getenv("REVEL_EMAIL_PW") == "" {
+        password = revel.Config.StringDefault("mail.password", "")
+      }else{
+        password = os.Getenv("REVEL_EMAIL_PW")
+      }
   }else{
     password = string(password_byte)
   }
