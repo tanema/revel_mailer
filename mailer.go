@@ -12,7 +12,6 @@ import (
   "strings"
   "reflect"
   "bytes"
-  "path"
   "net"
   "fmt"
   "io"
@@ -50,6 +49,15 @@ func (m *Mailer) do_config(){
   m.username, ok = revel.Config.String("mail.username") 
   if !ok {
     revel.ERROR.Println("mail.username not set")
+  }
+  if m.renderargs["to"] != nil {
+    m.to = makeSAFI(m.renderargs["to"])
+  }
+  if m.renderargs["cc"] != nil {
+    m.cc = makeSAFI(m.renderargs["cc"])
+  }
+  if m.renderargs["bcc"] != nil {
+    m.bcc = makeSAFI(m.renderargs["bcc"])
   }
   m.tls = revel.Config.BoolDefault("mail.tls", false) 
   m.debug = revel.Config.BoolDefault("mail.debug", false) 
@@ -101,17 +109,6 @@ func (m *Mailer) Send(mail_args map[string]interface{}) error {
   names := strings.Split(runtime.FuncForPC(pc).Name(), ".")
   m.template =  names[len(names)-2] + "/" + names[len(names)-1]
   m.do_config()
-
-  if mail_args["to"] != nil {
-    m.to = makeSAFI(mail_args["to"])
-  }
-  if mail_args["cc"] != nil {
-    m.cc = makeSAFI(mail_args["cc"])
-  }
-  if mail_args["bcc"] != nil {
-    m.bcc = makeSAFI(mail_args["bcc"])
-  }
-
   if m.debug {
     return m.sendDebug()
   }else{
@@ -186,40 +183,26 @@ func (m *Mailer) send() error {
 }
 
 func (m *Mailer) renderMail(w io.WriteCloser) ([]byte, error) {
-  multi := &multipart.Writer{}
-  if w != nil {
-    multi = multipart.NewWriter(w)
-  }else{
-    multi = multipart.NewWriter(bytes.NewBufferString(""))
-  }
+  multi := newMulti(w)
 
   body, err := m.renderBody(w)
   if err != nil {
     return nil, err
   }
 
-  from := ""
-  if m.renderargs["from"] == nil {
-    from = revel.Config.StringDefault("mail.from", revel.Config.StringDefault("mail.username", ""))
-  }else{
-    from = reflect.ValueOf(m.renderargs["from"]).String()
-  }
-
   mail := []string{
     "Subject: " + reflect.ValueOf(m.renderargs["subject"]).String(),
-    "From: " + from,
+    "From: " + m.getFrom(),
     "To: " + strings.Join(m.to, ","),
     "Bcc: " + strings.Join(m.bcc, ","),
     "Cc: " + strings.Join(m.cc, ","),
     "MIME-Version: 1.0",
     "Content-Type: multipart/mixed; boundary=" + multi.Boundary(),
     "Content-Transfer-Encoding: 7bit",
-    CRLF, CRLF, CRLF,
+    CRLF,
     "--" + multi.Boundary(),
     body,
-    CRLF,
     m.renderAttachments(multi.Boundary()),
-    CRLF,
     "--" + multi.Boundary() + "--",
     CRLF,
   }
@@ -228,18 +211,13 @@ func (m *Mailer) renderMail(w io.WriteCloser) ([]byte, error) {
 }
 
 func (m *Mailer) renderBody(w io.WriteCloser) (string, error) {
-  multi := &multipart.Writer{}
-  if w != nil {
-    multi = multipart.NewWriter(w)
-  }else{
-    multi = multipart.NewWriter(bytes.NewBufferString(""))
-  }
+  multi := newMulti(w)
 
   body := bytes.NewBuffer(nil)
 
   body.WriteString("Mime-Version: 1.0" + CRLF)
   body.WriteString("Content-Type: multipart/alternative; boundary=" + multi.Boundary() + "; charset=UTF-8" + CRLF)
-  body.WriteString("Content-Transfer-Encoding: 7bit" + CRLF)
+  body.WriteString("Content-Transfer-Encoding: 7bit" + CRLF + CRLF)
 
   template_count := 0
   contents := map[string]string{"plain": m.renderTemplate("txt"), "html": m.renderTemplate("html")}
@@ -263,6 +241,7 @@ func (m *Mailer) renderAttachments(boundary string) string {
   body := bytes.NewBuffer(nil)
 
   if len(m.attachments) > 0 {
+    body.WriteString(CRLF)
     for k, v := range m.attachments {
       body.WriteString("--" + boundary + CRLF)
       body.WriteString("Content-Type: application/octet-stream"+CRLF)
@@ -272,7 +251,7 @@ func (m *Mailer) renderAttachments(boundary string) string {
       b := make([]byte, base64.StdEncoding.EncodedLen(len(v)))
       base64.StdEncoding.Encode(b, v)
       body.Write(b)
-      body.WriteString(CRLF + CRLF)
+      body.WriteString(CRLF)
     }
   }
 
@@ -294,27 +273,30 @@ func (m *Mailer) renderTemplate(mime string) string {
 }
 
 func (m *Mailer) getPassword() string {
-  password := ""
-  email_pwd_path := path.Clean(path.Join(revel.BasePath, "email.pwd"))
-
-  if m.debug {
-    revel.INFO.Println(email_pwd_path)
+  if os.Getenv("REVEL_EMAIL_PW") != "" {
+    return os.Getenv("REVEL_EMAIL_PW")
+  }else if password, ok := revel.Config.String("mail.password"); ok {
+    return password
   }
 
-  password_byte, err := ioutil.ReadFile(email_pwd_path)
-  if err != nil {
-      if os.Getenv("REVEL_EMAIL_PW") == "" {
-        password = revel.Config.StringDefault("mail.password", "")
-      }else{
-        password = os.Getenv("REVEL_EMAIL_PW")
-      }
+  revel.ERROR.Println("mail password not set")
+  return ""
+}
+
+func (m *Mailer) getFrom() string {
+  if m.renderargs["from"] != nil {
+    return reflect.ValueOf(m.renderargs["from"]).String()
+  } else {
+    return revel.Config.StringDefault("mail.from", revel.Config.StringDefault("mail.username", ""))
+  }
+}
+
+func newMulti(w io.WriteCloser) *multipart.Writer {
+  if w != nil {
+    return multipart.NewWriter(w)
   }else{
-    password = string(password_byte)
+    return multipart.NewWriter(bytes.NewBufferString(""))
   }
-  if password == "" {
-    revel.ERROR.Println("mail password not set")
-  }
-  return password
 }
 
 func makeSAFI(intfc interface{}) []string{
