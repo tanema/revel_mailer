@@ -215,10 +215,10 @@ func (m *Mailer) renderMail(w io.WriteCloser) ([]byte, error) {
     "Content-Type: multipart/mixed; boundary=" + multi.Boundary(),
     "Content-Transfer-Encoding: 7bit",
     CRLF, CRLF, CRLF,
-    m.renderAttachments(multi.Boundary()),
-    CRLF,
     "--" + multi.Boundary(),
     body,
+    CRLF,
+    m.renderAttachments(multi.Boundary()),
     CRLF,
     "--" + multi.Boundary() + "--",
     CRLF,
@@ -249,8 +249,6 @@ func (m *Mailer) renderBody(w io.WriteCloser) (string, error) {
       template_count++
     }
   }
-
-  body.WriteString(m.renderAttachments(multi.Boundary()))
 
   body.WriteString("--" + multi.Boundary() + "--")
 
