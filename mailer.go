@@ -2,19 +2,21 @@ package revel_mailer
 
 import (
   "github.com/robfig/revel"
-  "net/smtp"
-  "bytes"
+  "encoding/base64"
+  "mime/multipart"
+  "path/filepath"
+  "crypto/tls"
   "io/ioutil"
+  "net/smtp"
+  "runtime"
+  "strings"
+  "reflect"
+  "bytes"
+  "path"
+  "net"
+  "fmt"
   "io"
   "os"
-  "mime/multipart"
-  "fmt"
-  "path"
-  "runtime"
-  "reflect"
-  "strings"
-  "net"
-  "crypto/tls"
 )
 
 const CRLF = "\r\n"
@@ -26,6 +28,7 @@ type Mailer struct {
   address, from, username string
   port int
   tls, debug, concurrent bool
+  attachments map[string][]byte
 }
 
 type H map[string]interface{}
@@ -75,6 +78,21 @@ func (m *Mailer) getClient() (*smtp.Client, error) {
     }
   }
   return c, nil
+}
+
+func (m *Mailer) Attach(file string) error {
+  if m.attachments == nil {
+    m.attachments = make(map[string][]byte)
+  }
+
+  b, err := ioutil.ReadFile(file)
+  if err != nil {
+    return err
+  }
+
+  _, fileName := filepath.Split(file)
+  m.attachments[fileName] = b
+  return nil
 }
 
 func (m *Mailer) Send(mail_args map[string]interface{}) error {
@@ -193,6 +211,7 @@ func (m *Mailer) renderMail(w io.WriteCloser) ([]byte, error) {
     "To: " + strings.Join(m.to, ","),
     "Bcc: " + strings.Join(m.bcc, ","),
     "Cc: " + strings.Join(m.cc, ","),
+    "MIME-Version: 1.0",
     "Content-Type: multipart/alternative; boundary=" + multi.Boundary(),
     CRLF,
     body,
@@ -204,19 +223,33 @@ func (m *Mailer) renderMail(w io.WriteCloser) ([]byte, error) {
 }
 
 func (m *Mailer) renderBody(multi *multipart.Writer) (string, error) {
-  body := ""
+  body := bytes.NewBuffer(nil)
   contents := map[string]string{"plain": m.renderTemplate("txt"), "html": m.renderTemplate("html")}
   for k, v := range contents {
     if v != "" {
-      body += "--" + multi.Boundary() + CRLF + "Content-Type: text/" + k + "; charset=UTF-8" + CRLF + CRLF + v + CRLF + CRLF
+      body.WriteString("--" + multi.Boundary() + CRLF + "Content-Type: text/" + k + "; charset=UTF-8" + CRLF + CRLF + v + CRLF + CRLF)
     }
   }
 
-  if body == "" {
-    return body, fmt.Errorf("No valid mail templates were found with the names %s.[html|txt]", m.template)
+  if len(m.attachments) > 0 {
+    for k, v := range m.attachments {
+      body.WriteString("--" + multi.Boundary() + CRLF)
+      body.WriteString("Content-Type: application/octet-stream"+CRLF)
+      body.WriteString("Content-Transfer-Encoding: base64"+CRLF)
+      body.WriteString("Content-Disposition: attachment; filename=\"" + k + "\"" + CRLF + CRLF)
+
+      b := make([]byte, base64.StdEncoding.EncodedLen(len(v)))
+      base64.StdEncoding.Encode(b, v)
+      body.Write(b)
+      body.WriteString(CRLF + CRLF)
+    }
   }
 
-  return body, nil
+  if body.Len() == 0 {
+    return "", fmt.Errorf("No valid mail templates were found with the names %s.[html|txt]", m.template)
+  }
+
+  return body.String(), nil
 }
 
 func (m *Mailer) renderTemplate(mime string) string {

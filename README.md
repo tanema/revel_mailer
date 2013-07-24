@@ -29,6 +29,8 @@ type UserMailer struct {
 }
 //revel_mailer.H is just a helper for map[string]interface{}
 func (u UserMailer) SendReport(reported_id string) error {
+  u.Attach("/path/to/file")
+
   return u.Send(revel_mailer.H{
             "subject": "a signature has been reported",
             "to": []string{"email@email.com"},
