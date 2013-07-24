@@ -193,7 +193,7 @@ func (m *Mailer) renderMail(w io.WriteCloser) ([]byte, error) {
     multi = multipart.NewWriter(bytes.NewBufferString(""))
   }
 
-  body, err := m.renderBody(multi)
+  body, err := m.renderBody(w)
   if err != nil {
     return nil, err
   }
@@ -212,9 +212,14 @@ func (m *Mailer) renderMail(w io.WriteCloser) ([]byte, error) {
     "Bcc: " + strings.Join(m.bcc, ","),
     "Cc: " + strings.Join(m.cc, ","),
     "MIME-Version: 1.0",
-    "Content-Type: multipart/alternative; boundary=" + multi.Boundary(),
+    "Content-Type: multipart/mixed; boundary=" + multi.Boundary(),
+    "Content-Transfer-Encoding: 7bit",
+    CRLF, CRLF, CRLF,
+    m.renderAttachments(multi.Boundary()),
     CRLF,
+    "--" + multi.Boundary(),
     body,
+    CRLF,
     "--" + multi.Boundary() + "--",
     CRLF,
   }
@@ -222,18 +227,46 @@ func (m *Mailer) renderMail(w io.WriteCloser) ([]byte, error) {
   return []byte(strings.Join(mail, CRLF)), nil
 }
 
-func (m *Mailer) renderBody(multi *multipart.Writer) (string, error) {
+func (m *Mailer) renderBody(w io.WriteCloser) (string, error) {
+  multi := &multipart.Writer{}
+  if w != nil {
+    multi = multipart.NewWriter(w)
+  }else{
+    multi = multipart.NewWriter(bytes.NewBufferString(""))
+  }
+
   body := bytes.NewBuffer(nil)
+
+  body.WriteString("Mime-Version: 1.0" + CRLF)
+  body.WriteString("Content-Type: multipart/alternative; boundary=" + multi.Boundary() + "; charset=UTF-8" + CRLF)
+  body.WriteString("Content-Transfer-Encoding: 7bit" + CRLF)
+
+  template_count := 0
   contents := map[string]string{"plain": m.renderTemplate("txt"), "html": m.renderTemplate("html")}
   for k, v := range contents {
     if v != "" {
-      body.WriteString("--" + multi.Boundary() + CRLF + "Content-Type: text/" + k + "; charset=UTF-8" + CRLF + CRLF + v + CRLF + CRLF)
+      body.WriteString("--" + multi.Boundary() + CRLF + "Content-Type: text/" + k + "; charset=UTF-8" + CRLF + "Content-Transfer-Encoding: quoted-printable" + CRLF + CRLF + v + CRLF + CRLF)
+      template_count++
     }
   }
 
+  body.WriteString(m.renderAttachments(multi.Boundary()))
+
+  body.WriteString("--" + multi.Boundary() + "--")
+
+  if template_count == 0 {
+    return "", fmt.Errorf("No valid mail templates were found with the names %s.[html|txt]", m.template)
+  }
+
+  return body.String(), nil
+}
+
+func (m *Mailer) renderAttachments(boundary string) string {
+  body := bytes.NewBuffer(nil)
+
   if len(m.attachments) > 0 {
     for k, v := range m.attachments {
-      body.WriteString("--" + multi.Boundary() + CRLF)
+      body.WriteString("--" + boundary + CRLF)
       body.WriteString("Content-Type: application/octet-stream"+CRLF)
       body.WriteString("Content-Transfer-Encoding: base64"+CRLF)
       body.WriteString("Content-Disposition: attachment; filename=\"" + k + "\"" + CRLF + CRLF)
@@ -245,11 +278,7 @@ func (m *Mailer) renderBody(multi *multipart.Writer) (string, error) {
     }
   }
 
-  if body.Len() == 0 {
-    return "", fmt.Errorf("No valid mail templates were found with the names %s.[html|txt]", m.template)
-  }
-
-  return body.String(), nil
+  return body.String()
 }
 
 func (m *Mailer) renderTemplate(mime string) string {
